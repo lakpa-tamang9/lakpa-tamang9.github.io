@@ -1,12 +1,8 @@
 github_users:
-  - torvalds
-  - alshedivat
+  - lakpa-tamang9
 
 github_repos:
-  - alshedivat/al-folio
-  - twbs/bootstrap
-  - jekyll/jekyll
-  - jquery/jquery
-  - FortAwesome/Font-Awesome
-  - jpswalsh/academicons
-  - mathjax/MathJax
+  - lakpa-tamang9/skeletal_action_recognition
+  - lakpa-tamang9/fastAPI_model_deployment
+  - lakpa-tamang9/ssd_objectdet_tflite
+  - lakpa-tamang9/recognition_gui_app
