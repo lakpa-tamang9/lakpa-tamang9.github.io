@@ -2,7 +2,7 @@
 layout: about
 title: About
 permalink: /
-subtitle: <a href='#'>Deakin University</a>. PhD Candidate, Geelong, Australia.
+subtitle: <a href='#'>Deakin University</a>. PhD Student, Robust Machine Learning, Out-of-Distribution.
 
 profile:
   align: right
