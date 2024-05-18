@@ -41,4 +41,8 @@ $$
 The log-likelihood function for this normal distribution can be written as:
 $$
 \mathcal{l}(\mu, \sigma) = \sum_{i = 1}^n \log(\frac{1}{\sqrt{2\pi\sigma^2}}\exp(\frac{-(x_i - \mu)^2}{2\sigma^2}))
+
+\mathcal{l}(\mu, \sigma) = \sum_{i = 1}^n(log(\frac{1}{\sqrt{2\pi\sigma^2}}) + \log(\exp(\frac{-(x_i - \mu)^2}{2\sigma^2})))
+
+\mathcal{l}(\mu, \sigma) = \sum_{i = 1}^n(-\frac{1}{2}\log(2\pi\sigma^2) - \frac{-(x_i - \mu)^2}{2\sigma^2})
 $$
