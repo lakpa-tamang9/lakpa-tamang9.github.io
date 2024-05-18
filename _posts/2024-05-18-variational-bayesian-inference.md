@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Variational Bayesian Inference 
+title: 'Variational Bayesian Inference'
 date: 2024-05-18 02:41:00-0400
 description: Using variational inference in bayesian networks..
 tags: bayesian inference, ELBO
@@ -46,3 +46,7 @@ $$
 
 \mathcal{l}(\mu, \sigma) = \sum_{i = 1}^n(-\frac{1}{2}\log(2\pi\sigma^2) - \frac{-(x_i - \mu)^2}{2\sigma^2})
 $$
+
+Bayesian Linear Layer 
+======
+Now, let us create a Bayesian linear layer where the weights are sampled from a fully factorised Normal with learnable parameters.
