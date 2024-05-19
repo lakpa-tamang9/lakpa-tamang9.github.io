@@ -249,3 +249,113 @@ If local representation `local_rep` is `True`, weights and biases are sampled fo
 
             return output, lqw - lpw
 ```
+
+Variational Inference and the ELBO
+======
+In Bayesian inference, the goal is to estimate the posterior distribution of the model parameters given the data. However, directly computing the posterior is often intractable for complex models, so we use variational inference as an approximation technique.
+
+**Evidence Lower Bound (ELBO)**
+The Evidence Lower Bound (ELBO) is a key concept in variational inference. It provides a way to approximate the true posterior distribution by optimizing a simpler, parameterized distribution. The ELBO is defined as:
+
+$$
+ELBO = \EX_{q(\theta)}[\log P(X \mid \theta)] - KL(q(\theta) \| P(\theta))
+$$
+
+- where, $$\EX_{q(\theta)}[\log P(X \mid \theta)]$$ is the expected log-likelihood of the data under the approximate posterior $$q(\theta)$$.
+- $$KL(q(\theta) \| P(\theta))$$ is the Kullback-Leibler divergence between the approximate posterior $$q(\theta)$$ and the prior $$P(\theta)$$.
+
+The ELBO serves two main purposes:
+
+1. Maximizing the Data Likelihood: By maximizing the first term, we ensure that the model parameters explain the data well.
+2. Regularizing with the Prior: By minimizing the KL divergence, we ensure that the approximate posterior stays close to the prior, preventing overfitting.
+
+In the `BayesLinearNormalDist` class discussed above, the forward method returns (`lqw` - `lpw`). This term represents the contribution of the KL divergence for the sampled weights and biases. By returning (`lqw` − `lpw`), the method provides the necessary components to compute the KL divergence term in the ELBO. This term is crucial for ensuring that the approximate posterior does not deviate too much from the prior.
+
+**In practice**, The loss function to be minimized during training is the negative ELBO.
+
+$$
+Loss = -ELBO = -(\EX_{q(\theta)}[\log P(X \mid \theta)] - KL(q(\theta) \| P(\theta)))
+$$
+
+Mixture of Gaussian Prior
+======
+The `isotropic_mixture_gauss_prior` class below defines a prior distribution that is a mixture of two isotropic Gaussian distributions. This means that the prior distribution for the weights and biases is not a single Gaussian, but a weighted combination of two Gaussians with different means and standard deviations. This type of prior can capture more complex prior beliefs about the parameters.
+
+In the `prior_class` argument in `BayesLinearNormalDist` class, the mixture of gaussian priors is considered. Let's break down this code:
+
+- **Parameters**:
+    - `mu1`, `sigma1`: Mean and standard deviation of the first Gaussian component.
+    - `mu2`, `sigma2`: Mean and standard deviation of the second Gaussian component.
+    - `pi`: Mixing coefficient for the first Gaussian component (probability that a sample comes from the first Gaussian). The second component's weight is 1 - `pi`.
+
+-- **Precomputed Terms**:
+    - `cte_term`: Constant term from the Gaussian log-likelihood.
+    - `det_sig_term1`, `det_sig_term2`: Logarithms of the standard deviations for the two Gaussian components.
+
+- **Distance Terms**:
+    - `dist_term1`: Distance term for the first Gaussian, measuring how far `x` is from `mu1` scaled by `sigma1`.
+    - `dist_term2`: Distance term for the second Gaussian, measuring how far `x` is from `mu2` scaled by `sigma2`.
+
+- **Mixture Log-Likelihood**:
+    - The log-likelihood is computed as the log of a weighted sum of the exponentiated terms from both Gaussian components.
+    - If `do_sum` is `True`, the log-likelihoods are summed over all elements. Otherwise, the mean is taken.
+
+**Mathematical Explanation**
+For each sampled parameter $$x$$ (weights, or biases), the log likelihood under the mixture prior is computed as:
+
+$$
+\log P(x) = \log(\pi_1\dot\exp(\frac{-(x-\mu_1)^2}{2\sigma_1^2}) + (1 - \pi_1)\dot\exp(\frac{-(x-\mu_2)^2}{2\sigma_2^2}))
+$$
+
+where, 
+- $$\pi_1$$, and $$1 - \pi_1$$ are the mixing coefficients.
+- $$\mu_1, \sigma_1, \mu_2, \sigma_2$$ are the means and standard deviations of two Gaussian components.
+
+**Significance in variational Inference**: The log-likelihood under the prior `lpw` is crucial for computing the KL divergence term in the ELBO.
+
+$$
+KL(q(\theta) \| P(\theta)) = \EX_{q(\theta)}[\log q(\theta) - \log P(\theta)]
+$$
+
+The `isotropic_mixture_gauss_prior` class defines a prior as a mixture of two Gaussians, and its loglike method computes the log-likelihood of parameters under this mixture prior. In the `BayesLinearNormalDist` class, this log-likelihood is used to compute the KL divergence term in the ELBO, balancing the fit of the model to the data with the regularization imposed by the prior.
+
+```
+class isotropic_mixture_gauss_prior(object):
+    def __init__(self, mu1=0, mu2=0, sigma1=0.1, sigma2=1.5, pi=0.5):
+        self.mu1 = mu1
+        self.sigma1 = sigma1
+        self.mu2 = mu2
+        self.sigma2 = sigma2
+        self.pi1 = pi
+        self.pi2 = 1 - pi
+
+        self.cte_term = -(0.5) * np.log(2 * np.pi)
+
+        self.det_sig_term1 = -np.log(self.sigma1)
+
+        self.det_sig_term2 = -np.log(self.sigma2)
+
+    def loglike(self, x, do_sum=True):
+
+        dist_term1 = -(0.5) * ((x - self.mu1) / self.sigma1) ** 2
+        dist_term2 = -(0.5) * ((x - self.mu2) / self.sigma2) ** 2
+
+        if do_sum:
+            return (
+                torch.log(
+                    self.pi1
+                    * torch.exp(self.cte_term + self.det_sig_term1 + dist_term1)
+                    + self.pi2
+                    * torch.exp(self.cte_term + self.det_sig_term2 + dist_term2)
+                )
+            ).sum()
+        else:
+            return (
+                torch.log(
+                    self.pi1
+                    * torch.exp(self.cte_term + self.det_sig_term1 + dist_term1)
+                    + self.pi2
+                    * torch.exp(self.cte_term + self.det_sig_term2 + dist_term2)
+                )
+            ).mean()
+```
