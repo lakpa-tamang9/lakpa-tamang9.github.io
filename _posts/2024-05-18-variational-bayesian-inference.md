@@ -93,7 +93,9 @@ class BayesLinearNormalDist(nn.Module):
         self.b_p = nn.Parameter(torch.Tensor(self.num_out_feats).uniform_(-3, -2))
 
 ```
-
+The forward method below defines the forward pass of the layer.
+- If `ifsample` is `False`, the method returns the deterministic output using the mean of the weights and biases.
+- If `ifsample` is `True`, it proceeds to sample weights and biases from the approximate posterior distribution rather than using the mean values. This stochastic sampling is crucial for Bayesian neural networks, allowing the model to account for uncertainty in the parameters. 
 ```
     def forward(self, X, sample=0, local_rep=False, ifsample=True):
 
@@ -107,7 +109,22 @@ class BayesLinearNormalDist(nn.Module):
                 output = torch.mm(X, self.W_mu)
             return output, torch.Tensor([0]).cuda()
 ```
+The weights and biases are expanded along a new dimension for sampling.
+- `eps_W` and `eps_b` are standard normal noise samples.
+- `std_w` and `std_b` are computed using the softplus function to ensure positivity.
+- `W` and `b` are sampled from the approximate posterior.
+- *Unsqueezing*: The unsqueeze method adds an extra dimension to the tensors. This is necessary to prepare the tensors for sampling.
+    - `W_mu` and `W_p` are unsqueezed at dimension 1, transforming them from shape (`num_inp_feats`, `num_out_feats`) to (`num_inp_feats`, 1, `num_out_feats`).
+    - `b_mu` and `b_p` are unsqueezed at dimension 0, transforming them from shape (`num_out_feats`) to (1, `num_out_feats`).
 
+- *Repeating*: The repeat method replicates the tensors along specified dimensions.This ensures that each weight and bias parameter has multiple samples, one for each desired sample.
+
+    - `W_mu` and `W_p` are repeated along the new dimension to match the number of samples, resulting in shape (`num_inp_feats`, `sample`, `num_out_feats`).
+    - `b_mu` and `b_p` are repeated along the new dimension to match the number of samples, resulting in shape (`sample`, `num_out_feats`).
+
+- *Sampling Noise*: `eps_W` and `eps_b` are tensors of the same shape as `W_mu` and `b_mu`, filled with samples from a standard normal distribution.
+- *Computing Standard Deviation*: The standard deviations for weights and biases are computed using the *softplus* function applied to `W_p` and `b_p`. The softplus function ensures that the standard deviations are positive.
+- The weights `W` and biases `b` are sampled from their approximate posterior distributions by adding the scaled noise (`std_w` * `eps_W` and `std_b` * `eps_b`) to their means (`W_mu` and `b_mu`).
 ```
         else:
             if not local_rep:
@@ -133,4 +150,102 @@ class BayesLinearNormalDist(nn.Module):
 
                 W = W_mu + 1 * std_w * eps_W
                 b = b_mu + 1 * std_b * eps_b
+```
+- `lqw` and `lpw` are the log-likelihoods of the weights and biases under the approximate posterior and prior distributions, respectively.
+- **Log-Likelihood under the Posterior (lqw)**: This is computed for both weights and biases if `self.with_bias` is `True`. The function `isotropic_gauss_loglike` calculates the log-likelihood of the sampled parameters under the approximate posterior distribution.
+
+- **Log-Likelihood under the Prior (lpw)**: This is computed using the provided prior class for both weights and biases if `self.with_bias` is `True`.
+
+For log-likelihood under the posterior, the weight and bias parameter including the mean, and standard deviation of weights are passed as arguments to `isotropic_gauss_loglike` function. The `isotropic_gauss_loglike` function computes the log-likelihood of a set of samples `x` under an isotropic Gaussian (Normal) distribution with mean `mu` and standard deviation `sigma`. Within the `BayesLinearNormalDist` class, the `isotropic_gauss_loglike` function is used to calculate the log-likelihood of the sampled weights and biases under the approximate posterior distribution. This helps in computing the *Evidence Lower Bound (ELBO)* for variational inference. Specifically, the log-likelihood difference between the posterior and prior distributions (`lqw` - `lpw`) is used as part of the loss function to optimize the parameters of the model.Here is a detailed breakdown of the method:
+```
+def isotropic_gauss_loglike(x, mu, sigma, do_sum=True):
+    """Returns the computed log-likelihood
+
+    Args:
+        x (_type_): the sampled weights or biases
+        mu (_type_): mean of gaussian distribution
+        sigma (_type_): standard deviation of gaussian dist
+        do_sum (bool, optional): _description_. a boolean indicating whether to sum the log-likelihoods
+        over all elements or to take the mean.
+
+    Returns:
+        _type_: Gaussian Log likelihood
+    """
+    cte_term = -(0.5) * np.log(2 * np.pi)   # constant term
+    det_sig_term = -torch.log(sigma)    # Determinant term
+    inner = (x - mu) / sigma
+    dist_term = -(0.5) * (inner**2)
+
+    if do_sum:
+        out = (cte_term + det_sig_term + dist_term).sum()  # sum over all weights
+    else:
+        out = (cte_term + det_sig_term + dist_term).mean()
+    return out
+```
+- `cte_term` : Constant term, This term is a constant that is part of the Gaussian log-likelihood formula. It arises from the normalization constant of the Gaussian distribution.
+- `det_sig_term`: Determinant term, This term accounts for the log of the determinant of the covariance matrix. In the isotropic case (where the covariance matrix is diagonal with equal entries), this term simplifies to the log of the standard deviation.
+- dist_term: Distance term, This term measures the squared distance between the samples x and the mean mu, scaled by the standard deviation sigma. The result is then multiplied by -0.5, which is part of the Gaussian log-likelihood formula.
+- The output is computed using the sampled weights and biases.
+
+```
+                if self.with_bias:
+                    lqw = isotropic_gauss_loglike(
+                        W, W_mu, std_w
+                    ) + isotropic_gauss_loglike(b, b_mu, std_b)
+                    lpw = self.prior.loglike(W) + self.prior.loglike(b)
+                else:
+                    lqw = isotropic_gauss_loglike(W, W_mu, std_w)
+                    lpw = self.prior.loglike(W)
+
+                # Reshaping weight to (num_inp_feats, num_out_feats) and biases to (num_out_feats)
+                W = W.view(W.size()[0], -1)
+                b = b.view(-1)
+
+                if self.with_bias:
+                    # wx + b
+                    output = torch.mm(X, W) + b.unsqueeze(0).expand(
+                        X.shape[0], -1
+                    )  # (batch_size, num_out_featsput)
+                else:
+                    output = torch.mm(X, W)
+```
+
+If local representation `local_rep` is `True`, weights and biases are sampled for each data point in the batch. The process becomes slightly different, with weights and biases sampled for each data point individually rather than a shared sample across the batch. The output is computed using batch matrix multiplication (`torch.bmm`). The method returns the output and the difference between the log-likelihoods of the weights and biases under the posterior and prior distributions.
+
+```
+            else:
+                W_mu = self.W_mu.unsqueeze(0).repeat(X.size()[0], 1, 1)
+                W_p = self.W_p.unsqueeze(0).repeat(X.size()[0], 1, 1)
+
+                b_mu = self.b_mu.unsqueeze(0).repeat(X.size()[0], 1)
+                b_p = self.b_p.unsqueeze(0).repeat(X.size()[0], 1)
+                # pdb.set_trace()
+                eps_W = W_mu.data.new(W_mu.size()).normal_()
+                eps_b = b_mu.data.new(b_mu.size()).normal_()
+
+                # sample parameters
+                std_w = 1e-6 + f.softplus(W_p, beta=1, threshold=20)
+                std_b = 1e-6 + f.softplus(b_p, beta=1, threshold=20)
+
+                W = W_mu + 1 * std_w * eps_W
+                b = b_mu + 1 * std_b * eps_b
+
+                # W = W.view(W.size()[0], -1)
+                # b = b.view(-1)
+                # pdb.set_trace()
+
+                if self.with_bias:
+                    output = (
+                        torch.bmm(X.view(X.size()[0], 1, X.size()[1]), W).squeeze() + b
+                    )  # (batch_size, num_out_featsput)
+                    lqw = isotropic_gauss_loglike(
+                        W, W_mu, std_w
+                    ) + isotropic_gauss_loglike(b, b_mu, std_b)
+                    lpw = self.prior.loglike(W) + self.prior.loglike(b)
+                else:
+                    output = torch.bmm(X.view(X.size()[0], 1, X.size()[1]), W).squeeze()
+                    lqw = isotropic_gauss_loglike(W, W_mu, std_w)
+                    lpw = self.prior.loglike(W)
+
+            return output, lqw - lpw
 ```
