@@ -18,34 +18,93 @@
         self.b_mu = nn.Parameter(torch.Tensor(self.num_out_feats).uniform_(-0.1, 0.1))
         self.b_p = nn.Parameter(torch.Tensor(self.num_out_feats).uniform_(-3, -2))
 
-</code></pre></div></div> <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    def forward(self, X, sample=0, local_rep=False, ifsample=True):
+</code></pre></div></div> <p>The forward method below defines the forward pass of the layer.</p> <ul> <li>If <code class="language-plaintext highlighter-rouge">ifsample</code> is <code class="language-plaintext highlighter-rouge">False</code>, the method returns the deterministic output using the mean of the weights and biases.</li> <li>If <code class="language-plaintext highlighter-rouge">ifsample</code> is <code class="language-plaintext highlighter-rouge">True</code>, it proceeds to sample weights and biases from the approximate posterior distribution rather than using the mean values. This stochastic sampling is crucial for Bayesian neural networks, allowing the model to account for uncertainty in the parameters. <div class="language-plaintext highlighter-rouge"> <div class="highlight"><pre class="highlight"><code>  def forward(self, X, sample=0, local_rep=False, ifsample=True):
 
-        if not ifsample:  # When training return MLE of w for quick validation
-            # pdb.set_trace()
-            if self.with_bias:
-                output = torch.mm(X, self.W_mu) + self.b_mu.expand(
-                    X.size()[0], self.num_out_feats
-                )
-            else:
-                output = torch.mm(X, self.W_mu)
-            return output, torch.Tensor([0]).cuda()
-</code></pre></div></div> <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        else:
-            if not local_rep:
-                # Tensor.new()  Constructs a new tensor of the same data type as self tensor.
-                # the same random sample is used for every element in the minibatch
+      if not ifsample:  # When training return MLE of w for quick validation
+          # pdb.set_trace()
+          if self.with_bias:
+              output = torch.mm(X, self.W_mu) + self.b_mu.expand(
+                  X.size()[0], self.num_out_feats
+              )
+          else:
+              output = torch.mm(X, self.W_mu)
+          return output, torch.Tensor([0]).cuda()
+</code></pre></div> </div> <p>The weights and biases are expanded along a new dimension for sampling.</p> </li> <li> <code class="language-plaintext highlighter-rouge">eps_W</code> and <code class="language-plaintext highlighter-rouge">eps_b</code> are standard normal noise samples.</li> <li> <code class="language-plaintext highlighter-rouge">std_w</code> and <code class="language-plaintext highlighter-rouge">std_b</code> are computed using the softplus function to ensure positivity.</li> <li> <code class="language-plaintext highlighter-rouge">W</code> and <code class="language-plaintext highlighter-rouge">b</code> are sampled from the approximate posterior.</li> <li> <em>Unsqueezing</em>: The unsqueeze method adds an extra dimension to the tensors. This is necessary to prepare the tensors for sampling. <ul> <li> <code class="language-plaintext highlighter-rouge">W_mu</code> and <code class="language-plaintext highlighter-rouge">W_p</code> are unsqueezed at dimension 1, transforming them from shape (<code class="language-plaintext highlighter-rouge">num_inp_feats</code>, <code class="language-plaintext highlighter-rouge">num_out_feats</code>) to (<code class="language-plaintext highlighter-rouge">num_inp_feats</code>, 1, <code class="language-plaintext highlighter-rouge">num_out_feats</code>).</li> <li> <code class="language-plaintext highlighter-rouge">b_mu</code> and <code class="language-plaintext highlighter-rouge">b_p</code> are unsqueezed at dimension 0, transforming them from shape (<code class="language-plaintext highlighter-rouge">num_out_feats</code>) to (1, <code class="language-plaintext highlighter-rouge">num_out_feats</code>).</li> </ul> </li> <li> <p><em>Repeating</em>: The repeat method replicates the tensors along specified dimensions.This ensures that each weight and bias parameter has multiple samples, one for each desired sample.</p> <ul> <li> <code class="language-plaintext highlighter-rouge">W_mu</code> and <code class="language-plaintext highlighter-rouge">W_p</code> are repeated along the new dimension to match the number of samples, resulting in shape (<code class="language-plaintext highlighter-rouge">num_inp_feats</code>, <code class="language-plaintext highlighter-rouge">sample</code>, <code class="language-plaintext highlighter-rouge">num_out_feats</code>).</li> <li> <code class="language-plaintext highlighter-rouge">b_mu</code> and <code class="language-plaintext highlighter-rouge">b_p</code> are repeated along the new dimension to match the number of samples, resulting in shape (<code class="language-plaintext highlighter-rouge">sample</code>, <code class="language-plaintext highlighter-rouge">num_out_feats</code>).</li> </ul> </li> <li> <em>Sampling Noise</em>: <code class="language-plaintext highlighter-rouge">eps_W</code> and <code class="language-plaintext highlighter-rouge">eps_b</code> are tensors of the same shape as <code class="language-plaintext highlighter-rouge">W_mu</code> and <code class="language-plaintext highlighter-rouge">b_mu</code>, filled with samples from a standard normal distribution.</li> <li> <em>Computing Standard Deviation</em>: The standard deviations for weights and biases are computed using the <em>softplus</em> function applied to <code class="language-plaintext highlighter-rouge">W_p</code> and <code class="language-plaintext highlighter-rouge">b_p</code>. The softplus function ensures that the standard deviations are positive.</li> <li>The weights <code class="language-plaintext highlighter-rouge">W</code> and biases <code class="language-plaintext highlighter-rouge">b</code> are sampled from their approximate posterior distributions by adding the scaled noise (<code class="language-plaintext highlighter-rouge">std_w</code> * <code class="language-plaintext highlighter-rouge">eps_W</code> and <code class="language-plaintext highlighter-rouge">std_b</code> * <code class="language-plaintext highlighter-rouge">eps_b</code>) to their means (<code class="language-plaintext highlighter-rouge">W_mu</code> and <code class="language-plaintext highlighter-rouge">b_mu</code>). <div class="language-plaintext highlighter-rouge"> <div class="highlight"><pre class="highlight"><code>      else:
+          if not local_rep:
+              # Tensor.new()  Constructs a new tensor of the same data type as self tensor.
+              # the same random sample is used for every element in the minibatch
+              # pdb.set_trace()
+              W_mu = self.W_mu.unsqueeze(1).repeat(1, sample, 1)
+              W_p = self.W_p.unsqueeze(1).repeat(1, sample, 1)
+
+              b_mu = self.b_mu.unsqueeze(0).repeat(sample, 1)
+              b_p = self.b_p.unsqueeze(0).repeat(sample, 1)
+
+              eps_W = W_mu.data.new(W_mu.size()).normal_()
+              eps_b = b_mu.data.new(b_mu.size()).normal_()
+
+              if not ifsample:
+                  eps_W = eps_W * 0
+                  eps_b = eps_b * 0
+
+              # sample parameters
+              std_w = 1e-6 + f.softplus(W_p, beta=1, threshold=20)
+              std_b = 1e-6 + f.softplus(b_p, beta=1, threshold=20)
+
+              W = W_mu + 1 * std_w * eps_W
+              b = b_mu + 1 * std_b * eps_b
+</code></pre></div> </div> </li> <li> <code class="language-plaintext highlighter-rouge">lqw</code> and <code class="language-plaintext highlighter-rouge">lpw</code> are the log-likelihoods of the weights and biases under the approximate posterior and prior distributions, respectively.</li> <li> <p><strong>Log-Likelihood under the Posterior (lqw)</strong>: This is computed for both weights and biases if <code class="language-plaintext highlighter-rouge">self.with_bias</code> is <code class="language-plaintext highlighter-rouge">True</code>. The function <code class="language-plaintext highlighter-rouge">isotropic_gauss_loglike</code> calculates the log-likelihood of the sampled parameters under the approximate posterior distribution.</p> </li> <li> <strong>Log-Likelihood under the Prior (lpw)</strong>: This is computed using the provided prior class for both weights and biases if <code class="language-plaintext highlighter-rouge">self.with_bias</code> is <code class="language-plaintext highlighter-rouge">True</code>.</li> </ul> <p>For log-likelihood under the posterior, the weight and bias parameter including the mean, and standard deviation of weights are passed as arguments to <code class="language-plaintext highlighter-rouge">isotropic_gauss_loglike</code> function. The <code class="language-plaintext highlighter-rouge">isotropic_gauss_loglike</code> function computes the log-likelihood of a set of samples <code class="language-plaintext highlighter-rouge">x</code> under an isotropic Gaussian (Normal) distribution with mean <code class="language-plaintext highlighter-rouge">mu</code> and standard deviation <code class="language-plaintext highlighter-rouge">sigma</code>. Within the <code class="language-plaintext highlighter-rouge">BayesLinearNormalDist</code> class, the <code class="language-plaintext highlighter-rouge">isotropic_gauss_loglike</code> function is used to calculate the log-likelihood of the sampled weights and biases under the approximate posterior distribution. This helps in computing the <em>Evidence Lower Bound (ELBO)</em> for variational inference. Specifically, the log-likelihood difference between the posterior and prior distributions (<code class="language-plaintext highlighter-rouge">lqw</code> - <code class="language-plaintext highlighter-rouge">lpw</code>) is used as part of the loss function to optimize the parameters of the model.Here is a detailed breakdown of the method:</p> <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>def isotropic_gauss_loglike(x, mu, sigma, do_sum=True):
+    """Returns the computed log-likelihood
+
+    Args:
+        x (_type_): the sampled weights or biases
+        mu (_type_): mean of gaussian distribution
+        sigma (_type_): standard deviation of gaussian dist
+        do_sum (bool, optional): _description_. a boolean indicating whether to sum the log-likelihoods
+        over all elements or to take the mean.
+
+    Returns:
+        _type_: Gaussian Log likelihood
+    """
+    cte_term = -(0.5) * np.log(2 * np.pi)   # constant term
+    det_sig_term = -torch.log(sigma)    # Determinant term
+    inner = (x - mu) / sigma
+    dist_term = -(0.5) * (inner**2)
+
+    if do_sum:
+        out = (cte_term + det_sig_term + dist_term).sum()  # sum over all weights
+    else:
+        out = (cte_term + det_sig_term + dist_term).mean()
+    return out
+</code></pre></div></div> <ul> <li> <code class="language-plaintext highlighter-rouge">cte_term</code> : Constant term, This term is a constant that is part of the Gaussian log-likelihood formula. It arises from the normalization constant of the Gaussian distribution.</li> <li> <code class="language-plaintext highlighter-rouge">det_sig_term</code>: Determinant term, This term accounts for the log of the determinant of the covariance matrix. In the isotropic case (where the covariance matrix is diagonal with equal entries), this term simplifies to the log of the standard deviation.</li> <li>dist_term: Distance term, This term measures the squared distance between the samples x and the mean mu, scaled by the standard deviation sigma. The result is then multiplied by -0.5, which is part of the Gaussian log-likelihood formula.</li> <li>The output is computed using the sampled weights and biases.</li> </ul> <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>                if self.with_bias:
+                    lqw = isotropic_gauss_loglike(
+                        W, W_mu, std_w
+                    ) + isotropic_gauss_loglike(b, b_mu, std_b)
+                    lpw = self.prior.loglike(W) + self.prior.loglike(b)
+                else:
+                    lqw = isotropic_gauss_loglike(W, W_mu, std_w)
+                    lpw = self.prior.loglike(W)
+
+                # Reshaping weight to (num_inp_feats, num_out_feats) and biases to (num_out_feats)
+                W = W.view(W.size()[0], -1)
+                b = b.view(-1)
+
+                if self.with_bias:
+                    # wx + b
+                    output = torch.mm(X, W) + b.unsqueeze(0).expand(
+                        X.shape[0], -1
+                    )  # (batch_size, num_out_featsput)
+                else:
+                    output = torch.mm(X, W)
+</code></pre></div></div> <p>If local representation <code class="language-plaintext highlighter-rouge">local_rep</code> is <code class="language-plaintext highlighter-rouge">True</code>, weights and biases are sampled for each data point in the batch. The process becomes slightly different, with weights and biases sampled for each data point individually rather than a shared sample across the batch. The output is computed using batch matrix multiplication (<code class="language-plaintext highlighter-rouge">torch.bmm</code>). The method returns the output and the difference between the log-likelihoods of the weights and biases under the posterior and prior distributions.</p> <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>            else:
+                W_mu = self.W_mu.unsqueeze(0).repeat(X.size()[0], 1, 1)
+                W_p = self.W_p.unsqueeze(0).repeat(X.size()[0], 1, 1)
+
+                b_mu = self.b_mu.unsqueeze(0).repeat(X.size()[0], 1)
+                b_p = self.b_p.unsqueeze(0).repeat(X.size()[0], 1)
                 # pdb.set_trace()
-                W_mu = self.W_mu.unsqueeze(1).repeat(1, sample, 1)
-                W_p = self.W_p.unsqueeze(1).repeat(1, sample, 1)
-
-                b_mu = self.b_mu.unsqueeze(0).repeat(sample, 1)
-                b_p = self.b_p.unsqueeze(0).repeat(sample, 1)
-
                 eps_W = W_mu.data.new(W_mu.size()).normal_()
                 eps_b = b_mu.data.new(b_mu.size()).normal_()
-
-                if not ifsample:
-                    eps_W = eps_W * 0
-                    eps_b = eps_b * 0
 
                 # sample parameters
                 std_w = 1e-6 + f.softplus(W_p, beta=1, threshold=20)
@@ -53,4 +112,23 @@
 
                 W = W_mu + 1 * std_w * eps_W
                 b = b_mu + 1 * std_b * eps_b
+
+                # W = W.view(W.size()[0], -1)
+                # b = b.view(-1)
+                # pdb.set_trace()
+
+                if self.with_bias:
+                    output = (
+                        torch.bmm(X.view(X.size()[0], 1, X.size()[1]), W).squeeze() + b
+                    )  # (batch_size, num_out_featsput)
+                    lqw = isotropic_gauss_loglike(
+                        W, W_mu, std_w
+                    ) + isotropic_gauss_loglike(b, b_mu, std_b)
+                    lpw = self.prior.loglike(W) + self.prior.loglike(b)
+                else:
+                    output = torch.bmm(X.view(X.size()[0], 1, X.size()[1]), W).squeeze()
+                    lqw = isotropic_gauss_loglike(W, W_mu, std_w)
+                    lpw = self.prior.loglike(W)
+
+            return output, lqw - lpw
 </code></pre></div></div> </div> </article> </div> </div> <footer class="fixed-bottom" role="contentinfo"> <div class="container mt-0"> © Copyright 2024 Lakpa D. Tamang. </div> </footer> <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script> <script src="/assets/js/bootstrap.bundle.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/mdbootstrap@4.20.0/js/mdb.min.js" integrity="sha256-NdbiivsvWt7VYCt6hYNT3h/th9vSTL4EDWeGs5SN3DA=" crossorigin="anonymous"></script> <script defer src="https://cdn.jsdelivr.net/npm/masonry-layout@4.2.2/dist/masonry.pkgd.min.js" integrity="sha256-Nn1q/fx0H7SNLZMQ5Hw5JLaTRZp0yILA/FRexe19VdI=" crossorigin="anonymous"></script> <script defer src="https://cdn.jsdelivr.net/npm/imagesloaded@5.0.0/imagesloaded.pkgd.min.js" integrity="sha256-htrLFfZJ6v5udOG+3kNLINIKh2gvoKqwEhHYfTTMICc=" crossorigin="anonymous"></script> <script defer src="/assets/js/masonry.js" type="text/javascript"></script> <script defer src="https://cdn.jsdelivr.net/npm/medium-zoom@1.1.0/dist/medium-zoom.min.js" integrity="sha256-ZgMyDAIYDYGxbcpJcfUnYwNevG/xi9OHKaR/8GK+jWc=" crossorigin="anonymous"></script> <script defer src="/assets/js/zoom.js?85ddb88934d28b74e78031fd54cf8308"></script> <script src="/assets/js/no_defer.js?2781658a0a2b13ed609542042a859126"></script> <script defer src="/assets/js/common.js?b7816bd189846d29eded8745f9c4cf77"></script> <script defer src="/assets/js/copy_code.js?12775fdf7f95e901d7119054556e495f" type="text/javascript"></script> <script defer src="/assets/js/jupyter_new_tab.js?d9f17b6adc2311cbabd747f4538bb15f"></script> <script async src="https://d1bxh8uas1mnw7.cloudfront.net/assets/embed.js"></script> <script async src="https://badge.dimensions.ai/badge.js"></script> <script type="text/javascript">window.MathJax={tex:{tags:"ams"}};</script> <script defer type="text/javascript" id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3.2.0/es5/tex-mml-chtml.min.js"></script> <script defer src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script> <script type="text/javascript">function progressBarSetup(){"max"in document.createElement("progress")?(initializeProgressElement(),$(document).on("scroll",function(){progressBar.attr({value:getCurrentScrollPosition()})}),$(window).on("resize",initializeProgressElement)):(resizeProgressBar(),$(document).on("scroll",resizeProgressBar),$(window).on("resize",resizeProgressBar))}function getCurrentScrollPosition(){return $(window).scrollTop()}function initializeProgressElement(){let e=$("#navbar").outerHeight(!0);$("body").css({"padding-top":e}),$("progress-container").css({"padding-top":e}),progressBar.css({top:e}),progressBar.attr({max:getDistanceToScroll(),value:getCurrentScrollPosition()})}function getDistanceToScroll(){return $(document).height()-$(window).height()}function resizeProgressBar(){progressBar.css({width:getWidthPercentage()+"%"})}function getWidthPercentage(){return getCurrentScrollPosition()/getDistanceToScroll()*100}const progressBar=$("#progress");window.onload=function(){setTimeout(progressBarSetup,50)};</script> </body> </html>
